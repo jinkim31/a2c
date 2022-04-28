@@ -100,7 +100,7 @@ class A2Cagent(object):
         return action
 
     ## train the actor network
-    def actor_learn(self, states, actions, advantages):
+    def train_actor(self, states, actions, advantages):
 
         with tf.GradientTape() as tape:
             # policy pdf
@@ -114,16 +114,6 @@ class A2Cagent(object):
         grads = tape.gradient(loss, self.actor.trainable_variables)
         self.actor_opt.apply_gradients(zip(grads, self.actor.trainable_variables))
 
-    ## single gradient update on a single batch data
-    def critic_learn(self, states, td_targets):
-        with tf.GradientTape() as tape:
-            td_hat = self.critic(states, training=True)
-            loss = tf.reduce_mean(tf.square(td_targets - td_hat))
-
-        grads = tape.gradient(loss, self.critic.trainable_variables)
-        self.critic_opt.apply_gradients(zip(grads, self.critic.trainable_variables))
-
-    ## computing targets: y_k = r_k + gamma*V(x_k+1)
     def td_target(self, rewards, next_v_values, dones):
         td_targets = np.zeros(next_v_values.shape)
         for i in range(next_v_values.shape[0]):  # number of batch
@@ -133,12 +123,22 @@ class A2Cagent(object):
                 td_targets[i] = rewards[i] + self.GAMMA * next_v_values[i]
         return td_targets
 
-    ## load actor wieghts
+    def train_critic(self, states, td_targets):
+        with tf.GradientTape() as tape:
+            # get state value estimated by critic
+            td_hat = self.critic(states, training=True)
+            # get mse between estimated and target state value
+            loss = tf.reduce_mean(tf.square(td_targets - td_hat))
+
+        # get gradient
+        grads = tape.gradient(loss, self.critic.trainable_variables)
+        # optimize
+        self.critic_opt.apply_gradients(zip(grads, self.critic.trainable_variables))
+
     def load_weights(self, path):
         self.actor.load_weights(path + 'pendulum_actor.h5')
         self.critic.load_weights(path + 'pendulum_critic.h5')
 
-    ## convert (list of np.array) to np.array
     def unpack_batch(self, batch):
         unpack = batch[0]
         for idx in range(len(batch) - 1):
@@ -192,7 +192,7 @@ class A2Cagent(object):
                 # unpack batches
                 states = self.unpack_batch(batch_state)
                 actions = self.unpack_batch(batch_action)
-                train_rewards = self.unpack_batch(batch_reward)
+                rewards = self.unpack_batch(batch_reward)
                 next_states = self.unpack_batch(batch_next_state)
                 dones = self.unpack_batch(batch_done)
 
@@ -203,33 +203,35 @@ class A2Cagent(object):
                 next_v_values = self.critic(tf.convert_to_tensor(next_states, dtype=tf.float32))
 
                 # get td target of each transition
-                td_targets = self.td_target(train_rewards, next_v_values.numpy(), dones)
+                td_targets = self.td_target(rewards, next_v_values.numpy(), dones)
 
                 # train critic
-                self.critic_learn(tf.convert_to_tensor(states, dtype=tf.float32),
+                self.train_critic(tf.convert_to_tensor(states, dtype=tf.float32),
                                   tf.convert_to_tensor(td_targets, dtype=tf.float32))
 
-                # compute advantages
-                v_values = self.critic(tf.convert_to_tensor(states, dtype=tf.float32))
+                # compute baseline (current state value)
+                baseline = self.critic(tf.convert_to_tensor(states, dtype=tf.float32))
+
+                # compute advantage
                 next_v_values = self.critic(tf.convert_to_tensor(next_states, dtype=tf.float32))
-                advantages = train_rewards + self.GAMMA * next_v_values - v_values
+                advantages = rewards + self.GAMMA * next_v_values - baseline
 
                 # train actor
-                self.actor_learn(tf.convert_to_tensor(states, dtype=tf.float32),
+                self.train_actor(tf.convert_to_tensor(states, dtype=tf.float32),
                                  tf.convert_to_tensor(actions, dtype=tf.float32),
                                  tf.convert_to_tensor(advantages, dtype=tf.float32))
 
-                # update current state
+                # update state
                 state = next_state
                 episode_reward += reward
                 time += 1
 
-            ## display rewards every episode
+            # print progress
             print('Episode: ', ep + 1, 'Time: ', time, 'Reward: ', episode_reward)
 
             self.save_epi_reward.append(episode_reward)
 
-            ## save weights every episode
+            # save weight every 10 transitions
             if ep % 10 == 0:
                 self.actor.save_weights("./save_weights/pendulum_actor.h5")
                 self.critic.save_weights("./save_weights/pendulum_critic.h5")
@@ -237,7 +239,6 @@ class A2Cagent(object):
         np.savetxt('./save_weights/pendulum_epi_reward.txt', self.save_epi_reward)
         print(self.save_epi_reward)
 
-    ## save them to file if done
     def plot_result(self):
         plt.plot(self.save_epi_reward)
         plt.show()
