@@ -125,13 +125,14 @@ class A2Cagent(object):
 
     ## computing targets: y_k = r_k + gamma*V(x_k+1)
     def td_target(self, rewards, next_v_values, dones):
-        y_i = np.zeros(next_v_values.shape)
+        print(next_v_values)
+        td_targets = np.zeros(next_v_values.shape)
         for i in range(next_v_values.shape[0]):  # number of batch
             if dones[i]:
-                y_i[i] = rewards[i]
+                td_targets[i] = rewards[i]
             else:
-                y_i[i] = rewards[i] + self.GAMMA * next_v_values[i]
-        return y_i
+                td_targets[i] = rewards[i] + self.GAMMA * next_v_values[i]
+        return td_targets
 
     ## load actor wieghts
     def load_weights(self, path):
@@ -167,23 +168,16 @@ class A2Cagent(object):
                 # observe
                 next_state, reward, done, _ = self.env.step(action)
 
-                # reshape 1d array to 2d row column vector.
-                state = np.array(state)
-                action = np.array(action)
-                reward = np.array(reward)
-                next_state = np.array(next_state)
-                done = np.array(done)
-
-                # compute advantage and TD target
-                train_reward = (reward + 8) / 8  # <-- normalization
+                # normalize reward to be within [0, 1]
+                normalized_reward = (reward + 8) / 8
 
                 # append to the batches(mutable arrays for efficiency)
                 # batches can be converted back to immutable tf tensors using unpack()
-                # [1 2 3].append([4 5 6]) returns [1 2 3 4 5 6] which eliminates borders between states/actions...
+                # [1 2 3].append([4 5 6]) returns [1 2 3 4 5 6] which eliminates borders between states, actions, etc.
                 # use [] to address the problem
                 batch_state.append([state])
                 batch_action.append([action])
-                batch_reward.append([train_reward])
+                batch_reward.append([normalized_reward])
                 batch_next_state.append([next_state])
                 batch_done.append([done])
 
@@ -195,7 +189,8 @@ class A2Cagent(object):
                     time += 1
                     continue
 
-                # batches full. not continued
+                # batches full. not continued.
+                # unpack batches
                 states = self.unpack_batch(batch_state)
                 actions = self.unpack_batch(batch_action)
                 train_rewards = self.unpack_batch(batch_reward)
@@ -205,8 +200,10 @@ class A2Cagent(object):
                 # clear batches
                 batch_state, batch_action, batch_reward, batch_next_state, batch_done = [], [], [], [], []
 
-                # compute next v_value with previous V estimate
+                # get next state value of each transition
                 next_v_values = self.critic(tf.convert_to_tensor(next_states, dtype=tf.float32))
+
+                # get td target of each transition
                 td_targets = self.td_target(train_rewards, next_v_values.numpy(), dones)
 
                 # train critic
