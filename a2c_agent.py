@@ -125,7 +125,6 @@ class A2Cagent(object):
 
     ## computing targets: y_k = r_k + gamma*V(x_k+1)
     def td_target(self, rewards, next_v_values, dones):
-        print(next_v_values)
         td_targets = np.zeros(next_v_values.shape)
         for i in range(next_v_values.shape[0]):  # number of batch
             if dones[i]:
